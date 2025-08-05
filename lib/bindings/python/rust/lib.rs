@@ -160,7 +160,9 @@ fn register_llm<'p>(
     let user_data_json = user_data
         .map(|dict| pythonize::depythonize(dict))
         .transpose()
-        .map_err(|err| PyErr::new::<PyException, _>(format!("Failed to convert user_data: {}", err)))?;
+        .map_err(|err| {
+            PyErr::new::<PyException, _>(format!("Failed to convert user_data: {}", err))
+        })?;
 
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let mut builder = dynamo_llm::local_model::LocalModelBuilder::default();
