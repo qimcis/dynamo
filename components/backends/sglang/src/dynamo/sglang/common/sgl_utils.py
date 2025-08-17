@@ -66,12 +66,42 @@ async def graceful_shutdown(runtime):
 
 def setup_native_endpoints(server_args, component, handler):
     """Setup sgl native endpoints"""
-    # flush cache
-    flush_endpoint = component.endpoint("flush_cache")
     tasks = []
+
+    flush_endpoint = component.endpoint("flush_cache")
     tasks.append(flush_endpoint.serve_endpoint(handler.flush_cache))
 
-    # expert distribution endpoints
+    get_model_info_endpoint = component.endpoint("get_model_info")
+    tasks.append(get_model_info_endpoint.serve_endpoint(handler.get_model_info))
+
+    get_server_info_endpoint = component.endpoint("get_server_info")
+    tasks.append(get_server_info_endpoint.serve_endpoint(handler.get_server_info))
+
+    health_endpoint = component.endpoint("health")
+    tasks.append(health_endpoint.serve_endpoint(handler.health))
+
+    health_generate_endpoint = component.endpoint("health_generate")
+    tasks.append(health_generate_endpoint.serve_endpoint(handler.health_generate))
+
+    update_weights_from_disk_endpoint = component.endpoint("update_weights_from_disk")
+    tasks.append(update_weights_from_disk_endpoint.serve_endpoint(handler.update_weights_from_disk))
+
+    # Model-specific endpoints
+    if getattr(server_args, 'is_embedding', False):
+        encode_endpoint = component.endpoint("encode")
+        tasks.append(encode_endpoint.serve_endpoint(handler.encode))
+
+    # Rerank endpoint for cross-encoder models
+    if getattr(server_args, 'is_rerank_model', False):
+        rerank_endpoint = component.endpoint("rerank")
+        tasks.append(rerank_endpoint.serve_endpoint(handler.rerank))
+
+    # Classification endpoint for reward models
+    if getattr(server_args, 'is_reward_model', False):
+        classify_endpoint = component.endpoint("classify")
+        tasks.append(classify_endpoint.serve_endpoint(handler.classify))
+
+    # Expert distribution endpoints
     if server_args.expert_distribution_recorder_mode is not None:
         start_expert_distribution_endpoint = component.endpoint(
             "start_expert_distribution_record"

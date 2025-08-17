@@ -13,8 +13,6 @@ from fastapi.routing import APIRoute
 from dynamo.runtime import DistributedRuntime, dynamo_worker
 from dynamo.runtime.logging import configure_dynamo_logging
 
-FLUSH_CACHE_ENDPOINT = "flush_cache"
-
 configure_dynamo_logging()
 
 
@@ -41,10 +39,11 @@ class SglangHttpServer:
             key = kv["key"] if isinstance(kv, dict) else kv.key
             if isinstance(key, bytes):
                 key = key.decode()
-            if not key.startswith(prefix):
+            key_str = key.decode() if isinstance(key, bytes) else str(key)
+            if not key_str.startswith(prefix):
                 continue
 
-            segments = key.split("/")
+            segments = key_str.split("/")
             # Format: instances/<ns>/<comp>/<endpoint:lease>
             if len(segments) < 4:
                 continue
@@ -101,7 +100,7 @@ class SglangHttpServer:
         @self.app.post("/flush_cache")
         async def flush_cache():
             """Flush the radix cache."""
-            endpoint_name = self.args.endpoint
+            endpoint_name = "flush_cache"
             try:
                 return await self._dispatch_command(
                     endpoint_name,
@@ -156,6 +155,157 @@ class SglangHttpServer:
                 logging.error(f"Dump expert distribution error: {e}")
                 return {
                     "message": f"Dump expert distribution failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.get("/get_model_info")
+        async def get_model_info():
+            """Get model information."""
+            endpoint_name = "get_model_info"
+            try:
+                return await self._dispatch_command(
+                    endpoint_name,
+                    success_message="Model info retrieved successfully",
+                )
+            except Exception as e:
+                logging.error(f"Get model info error: {e}")
+                return {
+                    "message": f"Get model info failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.get("/get_server_info")
+        async def get_server_info():
+            """Get server information."""
+            endpoint_name = "get_server_info"
+            try:
+                return await self._dispatch_command(
+                    endpoint_name,
+                    success_message="Server info retrieved successfully",
+                )
+            except Exception as e:
+                logging.error(f"Get server info error: {e}")
+                return {
+                    "message": f"Get server info failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.get("/health")
+        async def health():
+            """Basic health check."""
+            endpoint_name = "health"
+            try:
+                return await self._dispatch_command(
+                    endpoint_name,
+                    success_message="Health check passed",
+                )
+            except Exception as e:
+                logging.error(f"Health check error: {e}")
+                return {
+                    "message": f"Health check failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.post("/health_generate")
+        async def health_generate(request: dict = {}):
+            """Health check with generation test."""
+            endpoint_name = "health_generate"
+            try:
+                payload = request if request else {}
+                return await self._dispatch_command(
+                    endpoint_name,
+                    payload=payload,
+                    success_message="Health generation test passed",
+                )
+            except Exception as e:
+                logging.error(f"Health generate error: {e}")
+                return {
+                    "message": f"Health generate failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.post("/update_weights_from_disk")
+        async def update_weights_from_disk(request: dict):
+            """Update model weights from disk."""
+            endpoint_name = "update_weights_from_disk"
+            try:
+                return await self._dispatch_command(
+                    endpoint_name,
+                    payload=request,
+                    success_message="Weights updated successfully",
+                )
+            except Exception as e:
+                logging.error(f"Update weights error: {e}")
+                return {
+                    "message": f"Update weights failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.post("/encode")
+        async def encode(request: dict):
+            """Generate embeddings (embedding models only)."""
+            endpoint_name = "encode"
+            try:
+                return await self._dispatch_command(
+                    endpoint_name,
+                    payload=request,
+                    success_message="Embeddings generated successfully",
+                )
+            except Exception as e:
+                logging.error(f"Encode error: {e}")
+                return {
+                    "message": f"Encode failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.post("/v1/rerank")
+        async def rerank(request: dict):
+            """Rerank documents (rerank models only)."""
+            endpoint_name = "rerank"
+            try:
+                return await self._dispatch_command(
+                    endpoint_name,
+                    payload=request,
+                    success_message="Documents reranked successfully",
+                )
+            except Exception as e:
+                logging.error(f"Rerank error: {e}")
+                return {
+                    "message": f"Rerank failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.post("/classify")
+        async def classify(request: dict):
+            """Classify text (reward models only)."""
+            endpoint_name = "classify"
+            try:
+                return await self._dispatch_command(
+                    endpoint_name,
+                    payload=request,
+                    success_message="Text classified successfully",
+                )
+            except Exception as e:
+                logging.error(f"Classify error: {e}")
+                return {
+                    "message": f"Classify failed: {str(e)}",
+                    "success": False,
+                }
+
+        @self.app.post("/generate")
+        async def generate(request: dict):
+            """Generate text using the language model."""
+            endpoint_name = "generate"
+            try:
+                return await self._dispatch_command(
+                    endpoint_name,
+                    payload=request,
+                    success_message="Text generated successfully",
+                )
+            except Exception as e:
+                logging.error(f"Generate error: {e}")
+                return {
+                    "message": f"Generate failed: {str(e)}",
                     "success": False,
                 }
 
