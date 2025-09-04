@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
+import os
 from typing import Optional
 
 from tensorrt_llm.llmapi import BuildConfig
@@ -301,20 +302,37 @@ def cmd_line_args():
     )
 
     # Set the appropriate defaults for the endpoint and next endpoint.
+    # Prefer DYNAMO_NAMESPACE to construct default endpoints when not provided
+    ns = os.environ.get("DYNAMO_NAMESPACE")
+
     if is_first_worker(config):
         if args.endpoint == "":
-            args.endpoint = DEFAULT_ENDPOINT
+            args.endpoint = (
+                f"dyn://{ns}.tensorrt_llm.generate" if ns else DEFAULT_ENDPOINT
+            )
         if (
             args.next_endpoint == ""
             and config.disaggregation_mode != DisaggregationMode.AGGREGATED
         ):
-            args.next_endpoint = DEFAULT_NEXT_ENDPOINT
+            args.next_endpoint = (
+                f"dyn://{ns}.tensorrt_llm_next.generate"
+                if ns
+                else DEFAULT_NEXT_ENDPOINT
+            )
     elif config.disaggregation_mode == DisaggregationMode.ENCODE:
         if args.endpoint == "":
-            args.endpoint = DEFAULT_ENCODE_ENDPOINT
+            args.endpoint = (
+                f"dyn://{ns}.tensorrt_llm_encode.generate"
+                if ns
+                else DEFAULT_ENCODE_ENDPOINT
+            )
     else:
         if args.endpoint == "":
-            args.endpoint = DEFAULT_NEXT_ENDPOINT
+            args.endpoint = (
+                f"dyn://{ns}.tensorrt_llm_next.generate"
+                if ns
+                else DEFAULT_NEXT_ENDPOINT
+            )
         if args.next_endpoint != "":
             raise ValueError("Next endpoint is not allowed for the next worker")
     endpoint = args.endpoint

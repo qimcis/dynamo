@@ -108,10 +108,14 @@ Finally, SLA planner applies the change by scaling up/down the number of prefill
 
 For detailed deployment instructions including setup, configuration, troubleshooting, and architecture overview, see the [SLA Planner Deployment Guide](../guides/dynamo_deploy/sla_planner_deployment.md).
 
-**To deploy SLA Planner:**
+Examples by backend:
 ```bash
-cd components/backends/vllm/deploy
-kubectl apply -f disagg_planner.yaml -n {$NAMESPACE}
+# vLLM
+kubectl apply -f components/backends/vllm/deploy/disagg_planner.yaml -n ${NAMESPACE}
+# SGLang
+kubectl apply -f components/backends/sglang/deploy/disagg_planner.yaml -n ${NAMESPACE}
+# TensorRT-LLM
+kubectl apply -f components/backends/trtllm/deploy/disagg_planner.yaml -n ${NAMESPACE}
 ```
 
 > [!NOTE]

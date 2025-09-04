@@ -30,7 +30,7 @@ Each backend has deployment examples and configuration options:
 |---------|--------------------------|
 | **[vLLM](../../../components/backends/vllm/deploy/README.md)** | Aggregated, Aggregated + Router, Disaggregated, Disaggregated + Router, Disaggregated + Planner |
 | **[SGLang](../../../components/backends/sglang/deploy/README.md)** | Aggregated, Aggregated + Router, Disaggregated, Disaggregated + Planner, Disaggregated Multi-node |
-| **[TensorRT-LLM](../../../components/backends/trtllm/deploy/README.md)** | Aggregated, Aggregated + Router, Disaggregated, Disaggregated + Router |
+| **[TensorRT-LLM](../../../components/backends/trtllm/deploy/README.md)** | Aggregated, Aggregated + Router, Disaggregated, Disaggregated + Router, Disaggregated + Planner |
 
 ## 3. Deploy Your First Model
 

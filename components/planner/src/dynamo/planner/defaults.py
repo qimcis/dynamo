@@ -100,8 +100,16 @@ class SGLangComponentName:
     decode_worker_component_name = "decode"
     decode_worker_endpoint = "generate"
 
+class TRTLLMComponentName:
+    prefill_worker_k8s_name = "TRTLLMPrefillWorker"
+    prefill_worker_component_name = "tensorrt_llm_next"
+    prefill_worker_endpoint = "generate"
+    decode_worker_k8s_name = "TRTLLMDecodeWorker"
+    decode_worker_component_name = "tensorrt_llm"
+    decode_worker_endpoint = "generate"
 
 WORKER_COMPONENT_NAMES = {
     "vllm": VllmComponentName,
     "sglang": SGLangComponentName,
+    "trtllm": TRTLLMComponentName,
 }

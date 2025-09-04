@@ -33,11 +33,15 @@ export NAMESPACE=your-namespace
 
 ## 1. Deploy the System
 
-We use vllm as the backend engine in this guide. SLA planner also supports SGLang and will support TensorRT-LLM. Checkout `disagg_planner.yaml` in their example deployment folders for more details. The deployment is the same for all backends.
+We use vllm as the backend engine in this guide. SLA planner also supports SGLang and TensorRT-LLM. Check out `disagg_planner.yaml` in each backend's example deployment folder for more details. The deployment is the same for all backends.
 
 ```bash
 # Apply the disaggregated planner deployment
-kubectl apply -f components/backends/vllm/deploy/disagg_planner.yaml -n $NAMESPACE # for vllm
+kubectl apply -f components/backends/vllm/deploy/disagg_planner.yaml -n $NAMESPACE # vLLM
+# or
+kubectl apply -f components/backends/sglang/deploy/disagg_planner.yaml -n $NAMESPACE # SGLang
+# or
+kubectl apply -f components/backends/trtllm/deploy/disagg_planner.yaml -n $NAMESPACE # TensorRT-LLM
 
 # Check deployment status
 kubectl get pods -n $NAMESPACE
