@@ -131,6 +131,7 @@ impl<Locality: LocalityProvider + 'static, Metadata: BlockMetadata>
             max_transfer_batch_size: MAX_TRANSFER_BATCH_SIZE,
             num_outer_components: config.model_config.outer_dim,
             num_layers: config.model_config.num_layers,
+            transfer_coalesce_factor: config.model_config.transfer_coalesce_factor(),
         };
 
         // We want cuda offloads to happen in parallel with host onboards, so we need to use a different stream.

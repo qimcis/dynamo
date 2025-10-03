@@ -111,6 +111,12 @@ class KvConnectorWorker:
         else:
             kv_cache_dtype = STR_DTYPE_TO_TORCH_DTYPE[cache_config.cache_dtype]
 
+        # Get transfer_page_size from environment or config if available
+        # This allows users to optimize transfer block size for P→D transfers
+        transfer_page_size = None
+        if hasattr(cache_config, 'transfer_block_size') and cache_config.transfer_block_size is not None:
+            transfer_page_size = cache_config.transfer_block_size
+
         # Register with connector using ordered data
         self._connector.register_kv_caches(
             num_device_blocks,
@@ -119,6 +125,7 @@ class KvConnectorWorker:
             kv_cache_dtype.itemsize,
             ordered_kv_caches,
             raw_event_handles,
+            transfer_page_size=transfer_page_size,
         )
 
     def bind_connector_metadata(self, data: bytes) -> None:

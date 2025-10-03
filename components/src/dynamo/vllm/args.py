@@ -48,6 +48,7 @@ class Config:
     kv_port: Optional[int] = None
     port_range: DynamoPortRange
     custom_jinja_template: Optional[str] = None
+    cache_transfer_block_size: Optional[int] = None
 
     # mirror vLLM
     model: str
@@ -122,6 +123,15 @@ def parse_args() -> Config:
         default=None,
         help="Path to a custom Jinja template file to override the model's default chat template. This template will take precedence over any template found in the model repository.",
     )
+    parser.add_argument(
+        "--cache-transfer-block-size",
+        type=int,
+        default=None,
+        help="Block size for KV cache transfers between prefill and decode workers (in tokens). "
+        "If not specified, uses the attention block size (--block-size). "
+        "Larger values (256-512) can improve transfer bandwidth by reducing the number of small memory operations, "
+        "but may slightly reduce prefix cache hit rates. Recommended for disaggregated serving.",
+    )
 
     parser = AsyncEngineArgs.add_cli_args(parser)
     args = parser.parse_args()
@@ -156,6 +166,7 @@ def parse_args() -> Config:
     config.tool_call_parser = args.dyn_tool_call_parser
     config.reasoning_parser = args.dyn_reasoning_parser
     config.custom_jinja_template = args.custom_jinja_template
+    config.cache_transfer_block_size = args.cache_transfer_block_size
 
     # Validate custom Jinja template file exists if provided
     if config.custom_jinja_template is not None:
@@ -204,6 +215,29 @@ def parse_args() -> Config:
         config.engine_args.block_size = 16
         logger.debug(
             f"Setting reasonable default of {config.engine_args.block_size} for block_size"
+        )
+
+    # Validate cache_transfer_block_size if provided
+    if config.cache_transfer_block_size is not None:
+        if config.cache_transfer_block_size < 1:
+            raise ValueError(
+                f"--cache-transfer-block-size must be positive, got {config.cache_transfer_block_size}"
+            )
+        # Warn if transfer block size is not a multiple of attention block size
+        attention_block_size = config.engine_args.block_size
+        if config.cache_transfer_block_size % attention_block_size != 0:
+            logger.warning(
+                f"--cache-transfer-block-size ({config.cache_transfer_block_size}) is not a multiple of "
+                f"--block-size ({attention_block_size}). This may lead to suboptimal performance. "
+                f"Consider using a multiple like {attention_block_size * (config.cache_transfer_block_size // attention_block_size + 1)}."
+            )
+
+        coalesce_factor = config.cache_transfer_block_size // attention_block_size if config.cache_transfer_block_size >= attention_block_size else 1
+        coalesce_info = f"coalesce factor: {coalesce_factor}" if coalesce_factor > 1 else "no coalescing (transfer size < attention block size)"
+
+        logger.info(
+            f"Using cache transfer block size: {config.cache_transfer_block_size} tokens "
+            f"(attention block size: {attention_block_size}, {coalesce_info})"
         )
 
     return config

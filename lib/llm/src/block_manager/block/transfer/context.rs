@@ -162,6 +162,10 @@ pub struct PoolConfig {
     pub max_transfer_batch_size: usize,
     pub num_outer_components: usize,
     pub num_layers: usize,
+    /// Coalescing factor for transfers (transfer_page_size / page_size).
+    /// Used to calculate buffer sizes for coalesced transfers.
+    /// Default is 1 (no coalescing).
+    pub transfer_coalesce_factor: usize,
 }
 
 pub struct TransferContext {
@@ -174,6 +178,9 @@ pub struct TransferContext {
     cuda_event_tx: mpsc::UnboundedSender<(CudaEvent, oneshot::Sender<()>)>,
     cuda_event_worker: Option<JoinHandle<()>>,
     cancel_token: CancellationToken,
+
+    /// Coalescing factor for transfers (transfer_page_size / page_size)
+    transfer_coalesce_factor: usize,
 }
 
 impl TransferContext {
@@ -196,7 +203,9 @@ impl TransferContext {
                 // Calculate buffer size for worst-case scenario
                 // In practice, transfers can be much larger than max_transfer_batch_size
                 // due to direct transfer paths bypassing the batcher
-                let max_blocks_per_transfer = config.max_transfer_batch_size; // Conservative estimate for large transfers
+                // Account for coalescing factor: larger transfers need more buffer space
+                let max_blocks_per_transfer =
+                    config.max_transfer_batch_size * config.transfer_coalesce_factor;
                 let buffer_size = max_blocks_per_transfer
                     * config.num_outer_components
                     * config.num_layers
@@ -280,6 +289,11 @@ impl TransferContext {
             None
         };
 
+        let transfer_coalesce_factor = config
+            .as_ref()
+            .map(|c| c.transfer_coalesce_factor)
+            .unwrap_or(1);
+
         Self {
             nixl_agent,
             stream,
@@ -288,6 +302,7 @@ impl TransferContext {
             cuda_event_tx,
             cuda_event_worker: Some(cuda_event_worker),
             cancel_token,
+            transfer_coalesce_factor,
         }
     }
 
@@ -385,6 +400,11 @@ impl TransferContext {
 
     pub fn calculate_buffer_size(&self, address_count: usize) -> usize {
         address_count * std::mem::size_of::<u64>()
+    }
+
+    /// Get the transfer coalesce factor for this context
+    pub fn transfer_coalesce_factor(&self) -> usize {
+        self.transfer_coalesce_factor
     }
 }
 
@@ -513,7 +533,8 @@ pub mod v2 {
             let nixl_agent = Arc::new(None);
             let handle = tokio::runtime::Handle::current();
 
-            TransferContext::new(nixl_agent, stream, handle)
+            // Pass None for pool config in tests (disables pooling)
+            TransferContext::new(nixl_agent, stream, handle, None)
         }
 
         #[tokio::test]

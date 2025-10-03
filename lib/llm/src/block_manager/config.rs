@@ -75,11 +75,35 @@ pub struct KvManagerModelConfig {
 
     #[builder(default = "2")]
     pub dtype_width_bytes: usize,
+
+    /// Optional transfer-specific page size for optimizing KV cache transfers.
+    /// If None, uses the attention page_size for transfers.
+    /// Larger values (256-512) can improve transfer bandwidth but may reduce prefix cache hit rates.
+    #[builder(default)]
+    #[validate(range(min = 1))]
+    pub transfer_page_size: Option<usize>,
 }
 
 impl KvManagerModelConfig {
     pub fn builder() -> KvManagerModelConfigBuilder {
         KvManagerModelConfigBuilder::default()
+    }
+
+    /// Get the effective page size to use for transfers.
+    /// Returns transfer_page_size if set, otherwise falls back to page_size.
+    pub fn effective_transfer_page_size(&self) -> usize {
+        self.transfer_page_size.unwrap_or(self.page_size)
+    }
+
+    /// Get the coalescing factor for transfers (transfer_page_size / page_size).
+    /// Returns 1 if transfer_page_size is not set or equal to page_size.
+    pub fn transfer_coalesce_factor(&self) -> usize {
+        let transfer_size = self.effective_transfer_page_size();
+        if transfer_size >= self.page_size && transfer_size % self.page_size == 0 {
+            transfer_size / self.page_size
+        } else {
+            1
+        }
     }
 }
 

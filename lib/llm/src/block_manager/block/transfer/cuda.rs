@@ -211,6 +211,73 @@ fn calculate_block_dimensions_from_layout<T: BlockDataProvider>(
     })
 }
 
+/// Collect coalesced K/V cache addresses by treating N consecutive blocks as a single larger block
+/// This reduces the number of kernel launches and improves transfer bandwidth
+/// Returns (src_addresses, dst_addresses, per_group_layer_sizes) where per_group_layer_sizes[i]
+/// contains the actual layer size for group i (handling partial last groups correctly)
+fn collect_kv_addresses_coalesced<Source, Destination>(
+    sources: &[Source],
+    destinations: &[Destination],
+    num_layers: usize,
+    num_outer_dims: usize,
+    coalesce_factor: usize,
+    base_layer_size: usize,
+) -> Result<(Vec<u64>, Vec<u64>, Vec<usize>), TransferError>
+where
+    Source: BlockDataProvider,
+    Destination: BlockDataProviderMut,
+{
+    if sources.is_empty() {
+        return Err(TransferError::ExecutionError(
+            "No source blocks provided".to_string(),
+        ));
+    }
+
+    // With coalescing, we group consecutive blocks together
+    // e.g., coalesce_factor=4 means 4 attention blocks become 1 transfer unit
+    let num_coalesced_blocks = (sources.len() + coalesce_factor - 1) / coalesce_factor;
+    let total_address_pairs = num_coalesced_blocks * num_layers * num_outer_dims;
+    let mut src_addresses = Vec::with_capacity(total_address_pairs);
+    let mut dst_addresses = Vec::with_capacity(total_address_pairs);
+    let mut per_group_layer_sizes = Vec::with_capacity(num_coalesced_blocks);
+
+    let src_block_data: Vec<_> = sources.iter().map(|block| block.block_data()).collect();
+    let dst_block_data: Vec<_> = destinations
+        .iter()
+        .map(|block| block.block_data())
+        .collect();
+
+    // Process blocks in coalesced groups
+    for coalesced_idx in 0..num_coalesced_blocks {
+        let start_block = coalesced_idx * coalesce_factor;
+        let end_block = std::cmp::min(start_block + coalesce_factor, sources.len());
+        let actual_blocks_in_group = end_block - start_block;
+
+        // Calculate actual layer size for this group (critical for partial groups!)
+        let group_layer_size = base_layer_size * actual_blocks_in_group;
+        per_group_layer_sizes.push(group_layer_size);
+
+        // For each coalesced group, we only add the first block's address
+        // The kernel will handle the larger contiguous memory region
+        let src_data = &src_block_data[start_block];
+        let dst_data = &dst_block_data[start_block];
+
+        for layer_idx in 0..num_layers {
+            for outer_idx in 0..num_outer_dims {
+                let src_view = src_data.layer_view(layer_idx, outer_idx)?;
+                let dst_view = dst_data.layer_view(layer_idx, outer_idx)?;
+
+                unsafe {
+                    src_addresses.push(src_view.as_ptr() as u64);
+                    dst_addresses.push(dst_view.as_ptr() as u64);
+                }
+            }
+        }
+    }
+
+    Ok((src_addresses, dst_addresses, per_group_layer_sizes))
+}
+
 pub fn copy_blocks_with_customized_kernel<'a, Source, Destination>(
     sources: &'a [Source],
     destinations: &'a mut [Destination],
@@ -225,47 +292,114 @@ where
     // Get cached dimensions (calculated once per program lifetime!)
     let dims = get_cached_block_dimensions(&sources[0])?;
 
-    // Use cached dimensions
-    let (src_addresses, dst_addresses) =
-        collect_kv_addresses(sources, destinations, dims.num_layers, dims.num_outer_dims)?;
+    // Get coalesce factor from context
+    let coalesce_factor = ctx.transfer_coalesce_factor();
 
-    tracing::debug!(
-        "Using vectorized_copy for {} blocks [{}L×{}O×{}B], {} address pairs",
-        sources.len(),
-        dims.num_layers,
-        dims.num_outer_dims,
-        dims.layer_size,
-        src_addresses.len()
-    );
+    // Use coalescing only if we have an exact multiple, otherwise fall back to single-block transfers
+    // This prevents memory corruption from partial groups
+    let use_coalescing = coalesce_factor > 1 && sources.len() % coalesce_factor == 0;
 
-    // Use pool-based approach with TransferResources
-    let resources = crate::block_manager::block::transfer::context::TransferResources::acquire_for_kernel_launch(
-        ctx,
-        src_addresses.len()
-    )?;
+    if use_coalescing {
+        // All groups are full-size, safe to use uniform layer size
+        let (src_addresses, dst_addresses, per_group_sizes) = collect_kv_addresses_coalesced(
+            sources,
+            destinations,
+            dims.num_layers,
+            dims.num_outer_dims,
+            coalesce_factor,
+            dims.layer_size,
+        )?;
 
-    // Copy addresses to pinned buffers
-    resources.copy_addresses_to_buffers(&src_addresses, &dst_addresses)?;
+        // Verify all groups have the same size (they should, since we checked exact multiple)
+        debug_assert!(per_group_sizes.iter().all(|&s| s == per_group_sizes[0]));
+        let coalesced_layer_size = per_group_sizes[0];
 
-    tracing::debug!(
-        " Using pooled pinned buffers: src=0x{:x}, dst=0x{:x} ({} address pairs)",
-        resources.src_ptr(),
-        resources.dst_ptr(),
-        src_addresses.len()
-    );
+        tracing::info!(
+            "Using COALESCED vectorized_copy: {} blocks → {} coalesced units (factor={})",
+            sources.len(),
+            src_addresses.len() / (dims.num_layers * dims.num_outer_dims),
+            coalesce_factor
+        );
 
-    // Launch kernel with pooled resources (addresses already copied)
-    unsafe {
-        launch_copy_kernel_direct(
+        // Use pool-based approach with TransferResources
+        let resources = crate::block_manager::block::transfer::context::TransferResources::acquire_for_kernel_launch(
+            ctx,
+            src_addresses.len()
+        )?;
+
+        resources.copy_addresses_to_buffers(&src_addresses, &dst_addresses)?;
+
+        tracing::debug!(
+            " Pooled buffers: src=0x{:x}, dst=0x{:x} ({} pairs, layer_size={})",
             resources.src_ptr(),
             resources.dst_ptr(),
             src_addresses.len(),
+            coalesced_layer_size
+        );
+
+        // Launch kernel with coalesced layer size
+        unsafe {
+            launch_copy_kernel_direct(
+                resources.src_ptr(),
+                resources.dst_ptr(),
+                src_addresses.len(),
+                coalesced_layer_size,
+                stream,
+            )?;
+        }
+
+        tracing::debug!("Coalesced vectorized_copy completed");
+    } else {
+        // Fall back to non-coalesced transfer
+        if coalesce_factor > 1 && sources.len() % coalesce_factor != 0 {
+            tracing::debug!(
+                "Skipping coalescing: {} blocks not divisible by factor {} (would overflow on partial group)",
+                sources.len(),
+                coalesce_factor
+            );
+        }
+
+        let (src_addresses, dst_addresses) =
+            collect_kv_addresses(sources, destinations, dims.num_layers, dims.num_outer_dims)?;
+
+        tracing::debug!(
+            "Using vectorized_copy for {} blocks [{}L×{}O×{}B], {} address pairs",
+            sources.len(),
+            dims.num_layers,
+            dims.num_outer_dims,
             dims.layer_size,
-            stream,
+            src_addresses.len()
+        );
+
+        // Use pool-based approach with TransferResources
+        let resources = crate::block_manager::block::transfer::context::TransferResources::acquire_for_kernel_launch(
+            ctx,
+            src_addresses.len()
         )?;
+
+        resources.copy_addresses_to_buffers(&src_addresses, &dst_addresses)?;
+
+        tracing::debug!(
+            " Pooled buffers: src=0x{:x}, dst=0x{:x} ({} pairs)",
+            resources.src_ptr(),
+            resources.dst_ptr(),
+            src_addresses.len()
+        );
+
+        // Launch kernel with single-block layer size
+        unsafe {
+            launch_copy_kernel_direct(
+                resources.src_ptr(),
+                resources.dst_ptr(),
+                src_addresses.len(),
+                dims.layer_size,
+                stream,
+            )?;
+        }
+
+        tracing::debug!("Non-coalesced vectorized_copy completed");
     }
 
-    tracing::debug!("vectorized_copy completed - resources will be returned to pool automatically");
     Ok(None) // No manual cleanup needed - TransferResources handles it via Drop
 }
 

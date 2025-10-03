@@ -145,20 +145,23 @@ where
 fn resolve_cuda_transfer_mode(
     base_strategy: TransferStrategy,
     is_contiguous: bool,
+    coalesce_factor: usize,
 ) -> CudaTransferMode {
     match base_strategy {
         TransferStrategy::CudaAsyncH2D => {
-            if is_contiguous {
-                CudaTransferMode::Default
-            } else {
+            // Use custom kernel if non-contiguous OR if coalescing enabled
+            if !is_contiguous || coalesce_factor > 1 {
                 CudaTransferMode::Custom
+            } else {
+                CudaTransferMode::Default
             }
         }
         TransferStrategy::CudaAsyncD2H => {
-            if is_contiguous {
-                CudaTransferMode::Default
-            } else {
+            // Use custom kernel if non-contiguous OR if coalescing enabled
+            if !is_contiguous || coalesce_factor > 1 {
                 CudaTransferMode::Custom
+            } else {
+                CudaTransferMode::Default
             }
         }
         other => panic!(
@@ -205,8 +208,12 @@ where
             {
                 let is_contiguous = sources[0].block_data().is_fully_contiguous()
                     && targets[0].block_data().is_fully_contiguous();
-                let transfer_mode =
-                    resolve_cuda_transfer_mode(RB::write_to_strategy(), is_contiguous);
+                let coalesce_factor = ctx.transfer_coalesce_factor();
+                let transfer_mode = resolve_cuda_transfer_mode(
+                    RB::write_to_strategy(),
+                    is_contiguous,
+                    coalesce_factor,
+                );
 
                 match transfer_mode {
                     CudaTransferMode::Custom => {

@@ -38,6 +38,7 @@ pub trait Worker: Send + Sync {
         device_layout_type: Option<LayoutType>,
         host_layout_type: Option<LayoutType>,
         disk_layout_type: Option<LayoutType>,
+        transfer_page_size: Option<usize>,
     ) -> anyhow::Result<()>;
 
     fn bind_connector_metadata(&mut self, metadata: Vec<u8>) -> anyhow::Result<()>;
@@ -141,6 +142,7 @@ impl Worker for KvConnectorWorker {
         device_layout_type: Option<LayoutType>,
         host_layout_type: Option<LayoutType>,
         disk_layout_type: Option<LayoutType>,
+        transfer_page_size: Option<usize>,
     ) -> anyhow::Result<()> {
         if self.kvbm_worker.get().is_some() {
             tracing::warn!("kvbm worker already registered");
@@ -203,7 +205,7 @@ impl Worker for KvConnectorWorker {
             }
         };
 
-        let config = KvbmWorkerConfig::builder()
+        let mut config_builder = KvbmWorkerConfig::builder()
             .drt(self.drt.clone())
             .num_device_blocks(num_device_blocks)
             .page_size(page_size)
@@ -214,8 +216,14 @@ impl Worker for KvConnectorWorker {
             .scheduler_client(Some(self.transfer_client.clone()))
             .device_layout_type(detected_device_layout_type)
             .host_layout_type(host_layout_type.unwrap_or(LayoutType::FullyContiguous))
-            .disk_layout_type(disk_layout_type.unwrap_or(LayoutType::FullyContiguous))
-            .build()?;
+            .disk_layout_type(disk_layout_type.unwrap_or(LayoutType::FullyContiguous));
+
+        if let Some(tps) = transfer_page_size {
+            tracing::info!("Using transfer_page_size: {} tokens", tps);
+            config_builder = config_builder.transfer_page_size(Some(tps));
+        }
+
+        let config = config_builder.build()?;
 
         let worker = self.drt.runtime().primary().block_on(async move {
             let worker = KvbmWorker::new(config, false).await?;
@@ -463,7 +471,7 @@ impl PyKvConnectorWorker {
         Ok(Self { connector_worker })
     }
 
-    #[pyo3(signature = (num_device_blocks, page_size, device_id, dtype_width_bytes, kv_caches, raw_event_handles, device_layout_type=None, host_layout_type=None, disk_layout_type=None))]
+    #[pyo3(signature = (num_device_blocks, page_size, device_id, dtype_width_bytes, kv_caches, raw_event_handles, device_layout_type=None, host_layout_type=None, disk_layout_type=None, transfer_page_size=None))]
     pub fn register_kv_caches(
         &mut self,
         num_device_blocks: usize,
@@ -475,6 +483,7 @@ impl PyKvConnectorWorker {
         device_layout_type: Option<PyLayoutType>,
         host_layout_type: Option<PyLayoutType>,
         disk_layout_type: Option<PyLayoutType>,
+        transfer_page_size: Option<usize>,
     ) -> PyResult<()> {
         // Convert Python tensors to Rust VllmTensor objects
         let mut rust_kv_caches = Vec::new();
@@ -494,6 +503,7 @@ impl PyKvConnectorWorker {
                 device_layout_type.map(|py_layout| py_layout.into()),
                 host_layout_type.map(|py_layout| py_layout.into()),
                 disk_layout_type.map(|py_layout| py_layout.into()),
+                transfer_page_size,
             )
             .map_err(to_pyerr)
     }

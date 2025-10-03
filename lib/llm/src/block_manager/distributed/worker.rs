@@ -97,6 +97,11 @@ pub struct KvbmWorkerConfig {
     #[builder(default = "32")]
     page_size: usize,
 
+    /// Optional transfer-specific page size for optimizing KV cache transfers.
+    /// If None, uses the attention page_size for transfers.
+    #[builder(default = "None")]
+    transfer_page_size: Option<usize>,
+
     #[builder(default = "Vec::new()")]
     tensors: Vec<Arc<dyn TorchTensor>>,
 
@@ -578,12 +583,37 @@ impl KvbmWorker {
 
         let agent = build_agent(worker_id, leader_data.num_disk_blocks > 0)?;
 
+        // Calculate coalesce factor for transfer optimization
+        let transfer_coalesce_factor = if let Some(transfer_page_size) = config.transfer_page_size {
+            let page_size = config.page_size;
+            if transfer_page_size >= page_size && transfer_page_size % page_size == 0 {
+                let factor = transfer_page_size / page_size;
+                tracing::info!(
+                    "Transfer block coalescing enabled: {} attention blocks per transfer (transfer_page_size={}, page_size={})",
+                    factor,
+                    transfer_page_size,
+                    page_size
+                );
+                factor
+            } else {
+                tracing::warn!(
+                    "transfer_page_size ({}) is not a multiple of page_size ({}), disabling coalescing",
+                    transfer_page_size,
+                    page_size
+                );
+                1
+            }
+        } else {
+            1
+        };
+
         let pool_config = PoolConfig {
             enable_pool: true,
             max_concurrent_transfers: MAX_CONCURRENT_TRANSFERS,
             max_transfer_batch_size: MAX_TRANSFER_BATCH_SIZE,
             num_outer_components: device_layout.config().outer_dim,
             num_layers: device_layout.config().num_layers,
+            transfer_coalesce_factor,
         };
 
         let transfer_context = Arc::new(TransferContext::new(

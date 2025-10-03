@@ -144,6 +144,11 @@ def setup_vllm_engine(config, stat_logger=None):
     usage_context = UsageContext.OPENAI_API_SERVER
     vllm_config = engine_args.create_engine_config(usage_context=usage_context)
 
+    # Inject transfer_block_size into cache_config if set
+    if hasattr(config, 'cache_transfer_block_size') and config.cache_transfer_block_size is not None:
+        vllm_config.cache_config.transfer_block_size = config.cache_transfer_block_size
+        logger.info(f"Injected transfer_block_size={config.cache_transfer_block_size} into CacheConfig")
+
     factory = []
     if stat_logger:
         factory.append(stat_logger)
