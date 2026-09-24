@@ -1708,6 +1708,36 @@ pub struct OpenAIPreprocessor {
 
 pub(crate) const LORA_NAME_CONTEXT_KEY: &str = "discovery.lora_name";
 
+/// Move `required` properties ahead of optional ones in every nested object
+/// schema, keeping declaration order within each group.
+fn required_properties_first(schema: &mut serde_json::Value) {
+    match schema {
+        serde_json::Value::Object(map) => {
+            let required: Vec<String> = map
+                .get("required")
+                .and_then(serde_json::Value::as_array)
+                .map(|names| {
+                    names
+                        .iter()
+                        .filter_map(|name| name.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !required.is_empty()
+                && let Some(serde_json::Value::Object(properties)) = map.get_mut("properties")
+            {
+                let (first, rest): (Vec<_>, Vec<_>) = std::mem::take(properties)
+                    .into_iter()
+                    .partition(|(name, _)| required.contains(name));
+                *properties = first.into_iter().chain(rest).collect();
+            }
+            map.values_mut().for_each(required_properties_first);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(required_properties_first),
+        _ => {}
+    }
+}
+
 impl OpenAIPreprocessor {
     fn omitted_max_tokens_default(
         prompt_len: usize,
@@ -2312,6 +2342,23 @@ impl OpenAIPreprocessor {
             "enable_thinking".to_string(),
             serde_json::Value::Bool(false),
         );
+    }
+
+    /// GLM emits argument keys in the rendered schema order and often drops a
+    /// required key that follows optional ones, so list required properties
+    /// first. Both the prompt and the structural tag read the reordered tools.
+    fn order_glm47_required_properties_first(
+        request: &mut NvCreateChatCompletionRequest,
+        tool_call_parser: Option<&str>,
+    ) {
+        if tool_call_parser != Some("glm47") {
+            return;
+        }
+        for tool in request.inner.tools.iter_mut().flatten() {
+            if let Some(parameters) = tool.function.parameters.as_mut() {
+                required_properties_first(parameters);
+            }
+        }
     }
 
     fn mistral_reasoning_enabled(
@@ -7150,6 +7197,7 @@ impl
             thinking_control_from_client,
         );
         Self::normalize_kimi_k3_named_tool_choice(&mut request, self.tool_call_parser.as_deref());
+        Self::order_glm47_required_properties_first(&mut request, self.tool_call_parser.as_deref());
 
         // create a response generator
         let response_generator = request.response_generator(context.id().to_string());
