@@ -46,12 +46,12 @@ fn is_kimi_k2_parser(parser_name: Option<&str>) -> bool {
 }
 
 fn requires_intrinsic_structural_tag(parser_name: Option<&str>, tool_choice: &ToolChoice) -> bool {
-    // K2 forced calls and K3 named calls cannot use Dynamo's generic JSON-schema
-    // fallback because both families emit native, marker-delimited formats.
-    // Treat their structural tags as part of implementing these standard OpenAI
-    // request shapes, not as an operator opt-in. K3 required remains on its
+    // K2 and GLM-4.7 forced calls and K3 named calls cannot use Dynamo's generic
+    // JSON-schema fallback because these families emit native, marker-delimited
+    // formats. Treat their structural tags as part of implementing these standard
+    // OpenAI request shapes, not as an operator opt-in. K3 required remains on its
     // intentional prompt-level XTML path.
-    (is_kimi_k2_parser(parser_name)
+    ((is_kimi_k2_parser(parser_name) || parser_name == Some("glm47"))
         && matches!(tool_choice, ToolChoice::Required | ToolChoice::Named(_)))
         || (is_kimi_k3_parser(parser_name) && matches!(tool_choice, ToolChoice::Named(_)))
 }
