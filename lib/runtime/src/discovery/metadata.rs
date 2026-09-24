@@ -61,6 +61,14 @@ impl DiscoveryMetadata {
         }
     }
 
+    /// Whether nothing is registered
+    pub fn is_empty(&self) -> bool {
+        self.endpoints.is_empty()
+            && self.model_cards.is_empty()
+            && self.event_channels.is_empty()
+            && self.event_sources.is_empty()
+    }
+
     /// Register an endpoint instance
     pub fn register_endpoint(&mut self, instance: DiscoveryInstance) -> Result<()> {
         match instance.id() {

@@ -26,7 +26,10 @@ use kube::{Api, Client as KubeClient, api::DeleteParams};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{RwLock, broadcast};
+
+const CR_HEAL_INTERVAL: Duration = Duration::from_secs(30);
 
 fn validate_kubernetes_publisher_id(publisher_id: u64) -> Result<()> {
     if publisher_id > MAX_JSON_SAFE_PUBLISHER_ID {
@@ -131,7 +134,8 @@ impl KubeDiscoveryClient {
         let list_state = Arc::new(RwLock::new(HashMap::new()));
         let (event_tx, _) = broadcast::channel::<DiscoveryEvent>(4096);
 
-        let daemon = DiscoveryDaemon::new(kube_client.clone(), pod_info.clone(), cancel_token)?;
+        let daemon =
+            DiscoveryDaemon::new(kube_client.clone(), pod_info.clone(), cancel_token.clone())?;
         let daemon_list_state = list_state.clone();
         let daemon_event_tx = event_tx.clone();
         tokio::spawn(async move {
@@ -142,14 +146,56 @@ impl KubeDiscoveryClient {
 
         tracing::info!("Discovery daemon started");
 
-        Ok(Self {
+        let client = Self {
             instance_id,
             metadata,
             list_state,
             event_tx,
             kube_client,
             pod_info,
-        })
+        };
+        tokio::spawn(client.clone().heal_cr(cancel_token));
+        Ok(client)
+    }
+
+    /// Re-apply this pod's CR if it goes missing. Registrations only write it on change, so an
+    /// out-of-band delete would otherwise leave this worker undiscoverable until it restarts.
+    async fn heal_cr(self, cancel_token: CancellationToken) {
+        let api: Api<DynamoWorkerMetadata> =
+            Api::namespaced(self.kube_client.clone(), &self.pod_info.pod_namespace);
+        let cr_name = self.pod_info.target.cr_name();
+        let mut interval = tokio::time::interval(CR_HEAL_INTERVAL);
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => return,
+                _ = interval.tick() => {}
+            }
+            match api.get_opt(&cr_name).await {
+                Ok(None) => {}
+                Ok(Some(_)) => continue,
+                Err(e) => {
+                    tracing::warn!("Failed to check DynamoWorkerMetadata CR {cr_name}: {e}");
+                    continue;
+                }
+            }
+            let metadata = self.metadata.write().await;
+            if metadata.is_empty() {
+                continue;
+            }
+            tracing::warn!("DynamoWorkerMetadata CR {cr_name} is missing; re-applying");
+            let applied = match build_cr(
+                &cr_name,
+                &self.pod_info.pod_name,
+                &self.pod_info.pod_uid,
+                &metadata,
+            ) {
+                Ok(cr) => apply_cr(&self.kube_client, &self.pod_info.pod_namespace, &cr).await,
+                Err(e) => Err(e),
+            };
+            if let Err(e) = applied {
+                tracing::warn!("Failed to re-apply DynamoWorkerMetadata CR {cr_name}: {e}");
+            }
+        }
     }
 }
 
